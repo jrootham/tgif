@@ -11,7 +11,7 @@
 (defn fill-clause [literals sat-true sat-false]
 	(if (empty? literals)
 
-		(cons sat-true (list sat-false))
+		(cons (cons sat-true (list "")) (list (cons sat-false (list ""))))
 
 		(let 
 			[
@@ -41,6 +41,9 @@
 			result
 		)	
 	)
+)
+
+(defn search [cnf level ] 
 )
 
 (defn -main
