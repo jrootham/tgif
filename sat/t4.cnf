@@ -1,0 +1,6 @@
+~ Force a search for a negated literal
+
+1 ~2 ~3
+~1 2 ~3
+~1 ~2 3
+~1 ~2 ~3

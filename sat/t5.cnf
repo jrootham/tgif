@@ -1,0 +1,9 @@
+~ 3 false variables
+
+~a ~b ~c
+~a ~b c
+~a b ~c
+~a b c
+a ~b ~c
+a ~b c
+a b ~c

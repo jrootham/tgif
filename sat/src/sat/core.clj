@@ -76,15 +76,17 @@
 	)
 )
 
+(declare scan-cnf)
+
 (defn make-side [sat-set jump-level]
 	{:sat-set sat-set :jump-level jump-level}
 )
 
-(defn make-record [sat-true sat-false jump-level]
-	{:true-side (make-side sat-true jump-level) :false-side (make-side sat-false jump-level)}
+(defn make-clause [sat-true sat-false level-true level-false]
+	{:true-side (make-side sat-true level-true) :false-side (make-side sat-false level-false)}
 )
 
-(defn make-cnf [raw-cnf size]
+(defn make-cnf [raw-cnf infinity]
 	(loop [clause-list raw-cnf result ()]
 		(if (empty? clause-list)
 			result
@@ -94,7 +96,7 @@
 					sat-true (get clause :sat-true)
 					sat-false (get clause :sat-false)
 				]
-				(recur (rest clause-list) (cons (make-record sat-true sat-false size) result))
+				(recur (rest clause-list) (cons (make-clause sat-true sat-false infinity infinity) result))
 			)
 		)
 	)
@@ -104,61 +106,183 @@
 	(= 1 (+ (count sat-true) (count sat-false)))
 )
 
-(defn end-scan [options cnf input stats]
-	(let 
-		[
-			true-unit (get input :true-unit)
-			false-unit (get input :false-unit)
-		]
-		(if (= 0 (count (intersection true-unit false-unit)))
-			{:sat true}
-			{:sat false}
-		)
-	)		
+(def empty-answer {:true-side #{} :false-side #{}})
+
+(defn update-answer [assert-literals old-answer]
+	{
+		:true-side (union (get assert-literals :true-side) (get old-answer :true-side))
+		:false-side (union (get assert-literals :false-side) (get old-answer :false-side))
+	}
 )
 
-(defn do-clause [options clause cnf assert-literals input stats]
+(defn get-try [cnf]
+	(let
+		[
+			clause (first cnf)
+			sat-true (get (get clause :true-side) :sat-set)
+		]
+		(if (empty? sat-true)
+			(first (get (get clause :false-side) :sat-set))
+			(first sat-true)
+		)
+	)
+)
+
+(defn first-try [options cnf]
+	{:true-side #{(get-try cnf)} :false-side #{}}
+)
+
+(defn second-try [options cnf]
+	{:true-side #{} :false-side #{(get-try cnf)}}
+)
+
+(defn descend [options infinity level cnf accumulator stats]
+	(let
+		[
+			true-set (get accumulator :true-set)
+			false-set (get accumulator :false-set)
+			true-unit (get accumulator :true-unit)
+			false-unit (get accumulator :false-unit)
+			diff-true (difference true-set false-set)
+			diff-false (difference false-set true-set)
+			assert-true (union (difference true-set false-set) true-unit)
+			assert-false (union (difference false-set true-set) false-unit)
+		]
+		(if (and (empty? assert-true) (empty? assert-false))
+			(let
+				[
+					new-level (+ level 1)
+					assert-literals (first-try options cnf)
+					result (scan-cnf options infinity cnf new-level assert-literals stats)
+				]
+				(if (get result :sat)
+					result
+					(scan-cnf options infinity cnf new-level (second-try options cnf) stats)
+				)
+			)
+			(scan-cnf options infinity cnf level {:true-side assert-true :false-side assert-false} stats)
+		)
+	)
+)
+
+(defn end-scan [options infinity sat level cnf assert-literals accumulator stats]
+	(if sat
+		(if (empty? cnf)
+			{:sat true :answer (update-answer assert-literals empty-answer) :stats stats}
+			(if (empty? (intersection (get accumulator :true-unit) (get accumulator :false-unit)))
+				(let [result (descend options infinity level cnf accumulator stats)]
+					(if (get result :sat)
+						{:sat true :answer (update-answer assert-literals (get result :answer)) :stats stats}
+						result
+					)
+				)
+				{:sat false :level level :stats stats}
+			)
+		)
+		{:sat false :level level :stats stats}
+	)
+)
+
+(defn reduce-clause [options cnf sat level clause assert-true assert-false accumulator stats]
+	(let 
+		[
+			sat-true (get (get clause :true-side) :sat-set)
+			sat-false (get (get clause :false-side) :sat-set)
+			new-sat-true (difference sat-true assert-false)
+			new-sat-false (difference sat-false assert-true)
+		]
+		(if (and (empty? new-sat-true) (empty? new-sat-false))
+			(let 
+				[
+					tmp-level (get (get clause (get (get options :which-first) :jump)) :jump-level)
+					new-level (min level tmp-level)
+				]
+				{:sat false :level new-level :cnf () :accumulator {} :stats stats}
+			)
+			(let
+				[
+					level-true (get (get clause :true-side) :jump-level)
+					level-false (get (get clause :false-side) :jump-level)
+					new-level-true level-true
+					new-level-false level-false
+					true-set (union (get accumulator :true-set) new-sat-true)
+					false-set (union (get accumulator :false-set) new-sat-false)
+					true-unit (union (get accumulator :true-unit) (if (unit? sat-true sat-false) sat-true #{}))
+					false-unit (union (get accumulator :false-unit) (if (unit? sat-true sat-false) sat-false #{}))
+				]
+				{
+					:sat sat
+					:level level
+					:cnf (cons (make-clause new-sat-true new-sat-false new-level-true new-level-false) cnf)
+					:accumulator
+						{
+							:true-set true-set
+							:false-set false-set
+							:true-unit true-unit
+							:false-unit false-unit
+						}
+					:stats stats
+				}
+			)
+		)
+	)
+)
+
+(defn do-clause [options sat level clause cnf assert-literals accumulator stats]
 	(let
 		[
 			sat-true (get (get clause :true-side) :sat-set)
 			sat-false (get (get clause :false-side) :sat-set)
-			true-set (union (get input :true-set) sat-true)
-			false-set (union (get input :false-set) sat-false)
-			true-unit (union (get input :true-unit) (if (unit? sat-true sat-false) sat-true #{}))
-			false-unit (union (get input :false-unit) (if (unit? sat-true sat-false) sat-false #{}))
+			assert-true (get assert-literals :true-side)
+			assert-false (get assert-literals :false-side)
 		]
-
-		{
-			:cnf cnf
-			:input 
-				{
-					:true-set true-set
-					:false-set false-set
-					:true-unit true-unit
-					:false-unit false-unit
-				}
-			:stats stats
-		}
+		(if (and 
+				(empty? (intersection assert-true sat-true))
+				(empty? (intersection assert-false sat-false))
+			)
+			(reduce-clause options cnf sat level clause assert-true assert-false accumulator stats)
+			{:sat sat :level level :cnf cnf :accumulator accumulator :stats stats}
+		)
 	)
 )
- 
-(defn scan-cnf [options base-cnf level assert-literals stats]
+
+(defn extract [clause]
+	(let 
+		[	
+			true-side (get (get clause :true-side) :sat-set)
+			false-side (get (get clause :false-side) :sat-set)
+		]
+		{:true-side true-side :false-side false-side}
+	)
+)
+
+(defn display-cnf [cnf]
+	(println (map extract cnf))
+)
+
+(defn scan-cnf [options infinity base-cnf level assert-literals start-stats]
 	(loop 
 		[
 			clause-list base-cnf 
+			sat true
+			jump-level infinity
 			cnf ()
-			input {:true-set #{} :false-set #{} :true-unit #{} :false-unit #{}} 
+			accumulator {:true-set #{} :false-set #{} :true-unit #{} :false-unit #{}} 
+			stats start-stats
 		]
 		(if (empty? clause-list)
-			(end-scan options cnf input stats)
+			(end-scan options infinity sat level cnf assert-literals accumulator stats)
 			(let
 				[
 					clause (first clause-list)					
-					clause-result (do-clause options clause cnf assert-literals input)
+					clause-result (do-clause options sat level clause cnf assert-literals accumulator stats)
+					new-sat (get clause-result :sat)
+					new-level (get clause-result :level)
 					new-cnf (get clause-result :cnf)
-					input (get clause-result :input)
+					new-accumulator (get clause-result :accumulator)
+					new-stats (get clause-result :stats)
 				]
-				(recur (rest clause-list) new-cnf input)
+				(recur (rest clause-list) new-sat new-level new-cnf new-accumulator new-stats)
 			)
 		)
 	)
@@ -171,9 +295,9 @@
 		[
 			raw-cnf (simplify (get-cnf))
 			infinity (+ 1 (get-size raw-cnf))
-			cnf (make-cnf raw-cnf infinity)
+			options {:which-first {:first true :second false :jump :false-side}}
 		]
-		(println (scan-cnf {} cnf 0 {:true-side #{} :false-side #{}} {}))
+		(println (scan-cnf options infinity (make-cnf raw-cnf infinity) 0 {:true-side #{} :false-side #{}} {}))
 	)
 )
 

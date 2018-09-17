@@ -1,0 +1,10 @@
+~ 3 unsatisfiable variables
+
+~a ~b ~c
+~a ~b c
+~a b ~c
+~a b c
+a ~b ~c
+a ~b c
+a b ~c
+a b c
