@@ -4,6 +4,72 @@
   (:require [clojure.string :as str])
 )
 
+(def init-stats 
+	{
+		:count-steps 0 
+		:count-down 0 
+		:count-first 0 
+		:count-second 0 
+		:before-literals-true 0 
+		:before-literals-false 0 
+		:after-literals-true 0 
+		:after-literals-false 0 
+		:unit-true 0
+		:unit-false 0
+		:only-true 0
+		:only-false 0
+		:max-level 0
+	}
+)
+
+(defn update-stats [stats operation field amount]
+	(assoc stats field (operation amount (get stats field)))
+)
+
+(defn count-step [stats]
+	(update-stats stats + :count-steps 1)
+)
+
+(defn count-down [stats]
+	(update-stats stats + :count-down 1)
+)
+
+(defn count-first [stats]
+	(update-stats stats + :count-first 1)
+)
+
+(defn count-second [stats]
+	(update-stats stats + :count-second 1)
+)
+
+(defn before-literals [stats true-literals false-literals]
+	(let [new-stats (update-stats stats + :before-literals-true (count true-literals))] 
+		(update-stats new-stats + :before-literals-false (count false-literals))
+	)
+)
+
+(defn after-literals [stats true-literals false-literals]
+	(let [new-stats (update-stats stats + :after-literals-true (count true-literals))] 
+		(update-stats new-stats + :after-literals-false (count false-literals))
+	)
+)
+
+(defn count-units [stats true-units false-units]
+	(let [new-stats (update-stats stats + :unit-true (count true-units))] 
+		(update-stats new-stats + :unit-false (count false-units))
+	)
+)
+
+(defn count-only [stats only-true only-false]
+	(let [new-stats (update-stats stats + :only-true (count only-true))] 
+		(update-stats new-stats + :only-false (count only-false))
+	)
+)
+
+(defn max-level [stats level]
+	(update-stats stats max :max-level level)
+)
+
 (defn parse-clause [line]
 	(loop [literals (str/split line #" ") sat-true #{} sat-false #{}] 
 		(if (empty? literals)
@@ -141,26 +207,40 @@
 		[
 			true-set (get accumulator :true-set)
 			false-set (get accumulator :false-set)
-			true-unit (get accumulator :true-unit)
-			false-unit (get accumulator :false-unit)
-			diff-true (difference true-set false-set)
-			diff-false (difference false-set true-set)
-			assert-true (union (difference true-set false-set) true-unit)
-			assert-false (union (difference false-set true-set) false-unit)
+			unit-true (get accumulator :true-unit)
+			unit-false (get accumulator :false-unit)
+			only-true (difference true-set false-set)
+			only-false (difference false-set true-set)
+			assert-true (union only-true unit-true)
+			assert-false (union only-false unit-false)
+			new-stats (count-units (count-only stats only-true only-false) unit-true unit-false)
 		]
 		(if (and (empty? assert-true) (empty? assert-false))
 			(let
 				[
 					new-level (+ level 1)
 					assert-literals (first-try options cnf)
-					result (scan-cnf options infinity cnf new-level assert-literals stats)
+					latest-stats (count-first new-stats)
+					result (scan-cnf options infinity cnf new-level assert-literals latest-stats)
 				]
 				(if (get result :sat)
 					result
-					(scan-cnf options infinity cnf new-level (second-try options cnf) stats)
+					(let
+						[
+							try2 (second-try options cnf)
+							latest-stats (count-second (get result :stats))
+						]
+						(scan-cnf options infinity cnf new-level try2 latest-stats)
+					)
 				)
 			)
-			(scan-cnf options infinity cnf level {:true-side assert-true :false-side assert-false} stats)
+			(let
+				[
+					assert-literals {:true-side assert-true :false-side assert-false}
+					latest-stats (count-down new-stats)
+				]
+				(scan-cnf options infinity cnf level assert-literals latest-stats)
+			)
 		)
 	)
 )
@@ -172,7 +252,13 @@
 			(if (empty? (intersection (get accumulator :true-unit) (get accumulator :false-unit)))
 				(let [result (descend options infinity level cnf accumulator stats)]
 					(if (get result :sat)
-						{:sat true :answer (update-answer assert-literals (get result :answer)) :stats stats}
+						(let
+							[
+								new-answer (update-answer assert-literals (get result :answer))
+								new-stats (get result :stats)
+							]
+							{:sat true :answer new-answer :stats new-stats}
+						)
 						result
 					)
 				)
@@ -190,6 +276,7 @@
 			sat-false (get (get clause :false-side) :sat-set)
 			new-sat-true (difference sat-true assert-false)
 			new-sat-false (difference sat-false assert-true)
+			new-stats (after-literals stats new-sat-true new-sat-false)
 		]
 		(if (and (empty? new-sat-true) (empty? new-sat-false))
 			(let 
@@ -197,7 +284,7 @@
 					tmp-level (get (get clause (get (get options :which-first) :jump)) :jump-level)
 					new-level (min level tmp-level)
 				]
-				{:sat false :level new-level :cnf () :accumulator {} :stats stats}
+				{:sat false :level new-level :cnf () :accumulator {} :stats new-stats}
 			)
 			(let
 				[
@@ -221,7 +308,7 @@
 							:true-unit true-unit
 							:false-unit false-unit
 						}
-					:stats stats
+					:stats new-stats
 				}
 			)
 		)
@@ -235,13 +322,14 @@
 			sat-false (get (get clause :false-side) :sat-set)
 			assert-true (get assert-literals :true-side)
 			assert-false (get assert-literals :false-side)
+			new-stats (before-literals stats sat-true sat-false)
 		]
 		(if (and 
 				(empty? (intersection assert-true sat-true))
 				(empty? (intersection assert-false sat-false))
 			)
-			(reduce-clause options cnf sat level clause assert-true assert-false accumulator stats)
-			{:sat sat :level level :cnf cnf :accumulator accumulator :stats stats}
+			(reduce-clause options cnf sat level clause assert-true assert-false accumulator new-stats)
+			{:sat sat :level level :cnf cnf :accumulator accumulator :stats new-stats}
 		)
 	)
 )
@@ -280,13 +368,15 @@
 					new-level (get clause-result :level)
 					new-cnf (get clause-result :cnf)
 					new-accumulator (get clause-result :accumulator)
-					new-stats (get clause-result :stats)
+					new-stats (max-level (count-step (get clause-result :stats)) level)
 				]
 				(recur (rest clause-list) new-sat new-level new-cnf new-accumulator new-stats)
 			)
 		)
 	)
 )
+
+(def init-assert {:true-side #{} :false-side #{}})
 
 (defn -main
 	"SAT solver"
@@ -296,8 +386,9 @@
 			raw-cnf (simplify (get-cnf))
 			infinity (+ 1 (get-size raw-cnf))
 			options {:which-first {:first true :second false :jump :false-side}}
+			cnf (make-cnf raw-cnf infinity)
 		]
-		(println (scan-cnf options infinity (make-cnf raw-cnf infinity) 0 {:true-side #{} :false-side #{}} {}))
+		(println (scan-cnf options infinity cnf 0 init-assert init-stats))
 	)
 )
 
