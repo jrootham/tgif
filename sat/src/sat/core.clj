@@ -4,6 +4,20 @@
   (:require [clojure.string :as str])
 )
 
+(defn extract [clause]
+	(let 
+		[	
+			true-side (get (get clause :true-side) :sat-set)
+			false-side (get (get clause :false-side) :sat-set)
+		]
+		{:t true-side :f false-side}
+	)
+)
+
+(defn display-cnf [label cnf]
+	(println label (map extract cnf))
+)
+
 (def init-stats 
 	{
 		:count-steps 0 
@@ -178,8 +192,8 @@
 	)
 )
 
-(defn unit? [sat-true sat-false]
-	(= 1 (+ (count sat-true) (count sat-false)))
+(defn unit? [sat-first sat-second]
+	(= 1 (+ (count sat-first) (count sat-second)))
 )
 
 (def empty-answer {:true-side #{} :false-side #{}})
@@ -279,6 +293,13 @@
 	)
 )
 
+(defn unit [this-side other-side]
+	(if (unit? this-side other-side)
+		this-side
+		#{}
+	)
+)
+
 (defn reduce-clause [options cnf sat level clause assert-true assert-false accumulator stats]
 	(let 
 		[
@@ -304,8 +325,8 @@
 					new-level-false level-false
 					true-set (union (get accumulator :true-set) new-sat-true)
 					false-set (union (get accumulator :false-set) new-sat-false)
-					true-unit (union (get accumulator :true-unit) (if (unit? sat-true sat-false) sat-true #{}))
-					false-unit (union (get accumulator :false-unit) (if (unit? sat-true sat-false) sat-false #{}))
+					true-unit (union (get accumulator :true-unit) (unit new-sat-true new-sat-false))
+					false-unit (union (get accumulator :false-unit) (unit new-sat-false new-sat-true))
 				]
 				{
 					:sat sat
@@ -342,20 +363,6 @@
 			{:sat sat :level level :cnf cnf :accumulator accumulator :stats new-stats}
 		)
 	)
-)
-
-(defn extract [clause]
-	(let 
-		[	
-			true-side (get (get clause :true-side) :sat-set)
-			false-side (get (get clause :false-side) :sat-set)
-		]
-		{:true-side true-side :false-side false-side}
-	)
-)
-
-(defn display-cnf [cnf]
-	(println (map extract cnf))
 )
 
 (defn scan-cnf [options infinity base-cnf level assert-literals start-stats]
@@ -398,7 +405,18 @@
 			options {:which-first {:first true :second false :jump :false-side}}
 			cnf (make-cnf raw-cnf infinity)
 		]
-		(println (scan-cnf options infinity cnf 0 init-assert init-stats))
+		(let
+			[
+				result (scan-cnf options infinity cnf 0 init-assert init-stats)
+				sat (get result :sat)
+			]
+			(if sat
+				(println "SAT" (get result :answer))
+				(println "UNSAT")
+			)
+
+			(println (sort (get result :stats)))
+		)
 	)
 )
 
