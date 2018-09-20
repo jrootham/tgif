@@ -19,6 +19,8 @@
 		:only-true 0
 		:only-false 0
 		:max-level 0
+		:exhausted 0
+		:contradiction 0
 	}
 )
 
@@ -40,6 +42,14 @@
 
 (defn count-second [stats]
 	(update-stats stats + :count-second 1)
+)
+
+(defn exhausted [stats]
+	(update-stats stats + :exhausted 1)
+)
+
+(defn contradiction [stats]
+	(update-stats stats + :contradiction 1)
 )
 
 (defn before-literals [stats true-literals false-literals]
@@ -262,7 +272,7 @@
 						result
 					)
 				)
-				{:sat false :level level :stats stats}
+				{:sat false :level level :stats (contradiction stats)}
 			)
 		)
 		{:sat false :level level :stats stats}
@@ -284,7 +294,7 @@
 					tmp-level (get (get clause (get (get options :which-first) :jump)) :jump-level)
 					new-level (min level tmp-level)
 				]
-				{:sat false :level new-level :cnf () :accumulator {} :stats new-stats}
+				{:sat false :level new-level :cnf () :accumulator {} :stats (exhausted new-stats)}
 			)
 			(let
 				[
