@@ -94,7 +94,7 @@
 	(update-stats stats max :max-level level)
 )
 
-(defn parse-clause [line]
+(defn knuth-clause [line]
 	(loop [literals (str/split line #" ") sat-true #{} sat-false #{}] 
 		(if (empty? literals)
 
@@ -115,14 +115,50 @@
 	)
 )
 
-(defn get-cnf []
+(defn knuth-cnf []
 	(loop [line (read-line) result ()] 
 		(if line
 			(if (or (str/starts-with? line "~ ") (str/blank? line))
 				(recur (read-line) result)
-				(recur (read-line) (cons (parse-clause line) result)) 
+				(recur (read-line) (cons (knuth-clause line) result)) 
 			) 
 
+			result
+		)	
+	)
+)
+
+(defn dimacs-clause [line]
+	(loop [literals (str/split line #" ") sat-true #{} sat-false #{}] 
+		(if (empty? literals)
+
+			{:sat-true sat-true :sat-false sat-false}
+
+			(let 
+				[
+					this-one (Integer. (first literals))
+					remaining (rest literals)
+				]
+
+				(if (not (= 0 this-one))
+					(if (> 0 this-one)
+						(recur remaining sat-true (conj sat-false (- this-one)))
+						(recur remaining (conj sat-true this-one) sat-false)
+					)
+					(recur remaining sat-true sat-false)
+				)
+			)		
+		)
+	)
+)
+
+(defn dimacs-cnf []
+	(loop [line (read-line) result ()] 
+		(if line
+			(if (or (str/starts-with? line "c") (str/starts-with? line "p") (str/blank? line))
+				(recur (read-line) result)
+				(recur (read-line) (cons (dimacs-clause line) result)) 
+			) 
 			result
 		)	
 	)
@@ -400,11 +436,12 @@
 	[& args]
 	(let 
 		[
-			raw-cnf (simplify (get-cnf))
+			raw-cnf (simplify (dimacs-cnf))
 			infinity (+ 1 (get-size raw-cnf))
 			options {:which-first {:first true :second false :jump :false-side}}
 			cnf (make-cnf raw-cnf infinity)
 		]
+(display-cnf "input" cnf)
 		(let
 			[
 				result (scan-cnf options infinity cnf 0 init-assert init-stats)
